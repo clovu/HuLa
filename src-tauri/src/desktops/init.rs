@@ -42,9 +42,11 @@ impl<R: Runtime> CustomInit for tauri::Builder<R> {
 
     // 初始化web窗口事件
     fn init_webwindow_event(self) -> Self {
-        self.on_webview_event(|_, event| match event {
-            _ => (),
-        })
+        self
+        // TODO What should be implemented here or remove?
+        // self.on_webview_event(|_, event| match event {
+        //     _ => (),
+        // })
     }
 
     // 初始化系统窗口事件

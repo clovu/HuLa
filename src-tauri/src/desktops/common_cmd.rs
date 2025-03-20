@@ -75,8 +75,8 @@ pub fn screenshot(x: &str, y: &str, width: &str, height: &str) -> String {
         )
         .unwrap();
     let buffer = image.buffer();
-    let base64_str = general_purpose::STANDARD_NO_PAD.encode(buffer);
-    base64_str
+    
+    general_purpose::STANDARD_NO_PAD.encode(buffer)
 }
 
 #[tauri::command]
