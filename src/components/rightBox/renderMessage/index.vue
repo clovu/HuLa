@@ -8,8 +8,8 @@
       searchKeyword,
       historyMode
     ]"
-    v-if="historyMode || !hasBubble(message.message.type)"
-    :is="componentMap[message.message.type]"
+    v-if="historyMode || !hasBubble"
+    :is="componentMap[msgType]"
     :body="message.message.body"
     :message-status="message.message.status"
     :upload-progress="uploadProgress"
@@ -46,13 +46,6 @@
         :focusable="false"
         @click.stop />
       <div class="flex items-start flex-1" :class="isMe ? 'flex-row-reverse' : ''">
-        <!-- 回复消息提示的箭头 -->
-        <svg
-          v-if="activeReply === message.message.id"
-          class="size-16px pt-4px color-#909090"
-          :class="isMe ? 'ml-8px' : 'mr-8px'">
-          <use :href="isMe ? `#corner-down-left` : `#corner-down-right`"></use>
-        </svg>
         <!-- 头像 -->
         <n-popover
           :ref="(el: any) => el && (infoPopoverRefs[message.message.id] = el)"
@@ -62,22 +55,21 @@
           :show-arrow="false"
           style="padding: 0; background: var(--bg-info)">
           <template #trigger>
-            <ContextMenu
+            <LazyContextMenu
               @select="$event.click(message, 'Main')"
               :content="message"
               :menu="isGroup ? optionsList : void 0"
               :special-menu="report">
-              <!-- 存在头像时候显示 -->
               <n-avatar
                 round
                 :size="34"
-                @click="handleAvatarClick(message.fromUser.uid, message.message.id)"
+                @click="isMobile() ? toFriendInfoPage(message.fromUser.uid) : (selectKey = message.message.id)"
                 class="select-none"
-                :color="themes.content === ThemeEnum.DARK ? '' : '#fff'"
-                :fallback-src="themes.content === ThemeEnum.DARK ? '/logoL.png' : '/logoD.png'"
-                :src="getAvatarSrc(message.fromUser.uid)"
+                :color="isDark ? '' : '#fff'"
+                :fallback-src="isDark ? '/logoL.png' : '/logoD.png'"
+                :src="mainAvatarSrc"
                 :class="isMe ? '' : 'mr-10px'" />
-            </ContextMenu>
+            </LazyContextMenu>
           </template>
           <!-- 用户个人信息框 -->
           <InfoPopover v-if="selectKey === message.message.id" :uid="fromUser.uid" />
@@ -85,7 +77,7 @@
 
         <n-flex vertical :size="6" class="color-[--text-color] flex-1" :class="isMe ? 'items-end mr-10px' : ''">
           <n-flex :size="6" align="center" :style="isMe ? 'flex-direction: row-reverse' : ''">
-            <ContextMenu
+            <LazyContextMenu
               @select="$event.click(message, 'Main')"
               :content="message"
               :menu="isGroup ? optionsList : void 0"
@@ -97,23 +89,16 @@
                 v-if="isGroup"
                 :style="isMe ? 'flex-direction: row-reverse' : ''">
                 <!-- 用户徽章 -->
-                <n-popover
-                  v-if="
-                    globalStore.currentSessionRoomId === '1' &&
-                    cachedStore.badgeById(groupStore.getUserInfo(fromUser.uid)?.wearingItemId)?.img
-                  "
-                  trigger="hover">
+                <n-popover v-if="senderBadge?.img" trigger="hover">
                   <template #trigger>
                     <n-avatar
                       class="select-none"
                       :size="18"
                       round
-                      :fallback-src="themes.content === ThemeEnum.DARK ? '/logoL.png' : '/logoD.png'"
-                      :src="cachedStore.badgeById(groupStore.getUserInfo(fromUser.uid)?.wearingItemId)?.img" />
+                      :fallback-src="isDark ? '/logoL.png' : '/logoD.png'"
+                      :src="senderBadge.img" />
                   </template>
-                  <span>
-                    {{ cachedStore.badgeById(groupStore.getUserInfo(fromUser.uid)?.wearingItemId)?.describe }}
-                  </span>
+                  <span>{{ senderBadge.describe }}</span>
                 </n-popover>
                 <!-- 用户名 -->
                 <span
@@ -121,23 +106,19 @@
                     'text-12px select-none color-#909090 inline-block align-top',
                     !isMe ? 'cursor-pointer hover:color-#13987f transition-colors' : ''
                   ]"
-                  @click.stop="handleMentionUser">
+                  @click.stop="!isMe && isGroup && useMitt.emit(MittEnum.AT, fromUser.uid)">
                   {{ senderDisplayName }}
                 </span>
                 <!-- 消息归属地 -->
                 <span v-if="senderLocPlace" class="text-(12px #909090)">({{ senderLocPlace }})</span>
               </n-flex>
-            </ContextMenu>
+            </LazyContextMenu>
             <!-- 群主 -->
-            <div
-              v-if="groupStore.isCurrentLord(fromUser.uid)"
-              class="flex px-4px py-3px rounded-4px bg-#d5304f30 size-fit select-none">
+            <div v-if="isLord" class="flex px-4px py-3px rounded-4px bg-#d5304f30 size-fit select-none">
               <span class="text-(9px #d5304f)">{{ t('home.chat_sidebar.roles.owner') }}</span>
             </div>
             <!-- 管理员 -->
-            <div
-              v-if="groupStore.isAdmin(fromUser.uid)"
-              class="flex px-4px py-3px rounded-4px bg-#1a7d6b30 size-fit select-none">
+            <div v-if="isAdmin" class="flex px-4px py-3px rounded-4px bg-#1a7d6b30 size-fit select-none">
               <span class="text-(9px #008080)">{{ t('home.chat_sidebar.roles.admin') }}</span>
             </div>
             <!-- 信息时间(群聊) -->
@@ -148,11 +129,11 @@
             </Transition>
           </n-flex>
           <!--  气泡样式  -->
-          <ContextMenu
-            v-on-long-press="[(e) => handleLongPress(e, handleItemType(message.message.type)), longPressOption]"
+          <LazyContextMenu
+            v-on-long-press="[(e) => handleLongPress(e, bubbleMenu), longPressOption]"
             :content="message"
-            @mousedown.right="recordSelectionBeforeContext"
-            @contextmenu="handleContextMenuSelection"
+            @mousedown.right="macGuard.recordSelectionBeforeContext"
+            @contextmenu="macGuard.handleContextMenuSelection"
             @mouseenter="() => (hoverMsgId = message.message.id)"
             @mouseleave="() => (hoverMsgId = '')"
             class="relative flex flex-col chat-message-max-width"
@@ -160,9 +141,9 @@
             :class="[isMe ? 'items-end' : 'items-start', isMobile() ? 'w-full max-w-full' : '']"
             :style="{ '--bubble-max-width': bubbleMaxWidth }"
             @select="$event.click(message, 'Main')"
-            :menu="handleItemType(message.message.type)"
+            :menu="bubbleMenu"
             :emoji="emojiList"
-            :special-menu="specialMenuList(message.message.type)"
+            :special-menu="bubbleSpecialMenu"
             @reply-emoji="handleEmojiSelect($event, message)"
             @click="handleMsgClick(message)">
             <component
@@ -175,17 +156,13 @@
                 historyMode
               ]"
               :class="[
-                message.message.type === MsgEnum.VOICE ? 'select-none cursor-pointer' : 'select-text cursor-text',
-                !isSpecialMsgType(message.message.type) ? (isMe ? 'bubble-oneself' : 'bubble') : '',
+                msgType === MsgEnum.VOICE ? 'select-none cursor-pointer' : 'select-text cursor-text',
+                !isSpecial ? (isMe ? 'bubble-oneself' : 'bubble') : '',
                 {
-                  active:
-                    activeBubble === message.message.id &&
-                    !isSpecialMsgType(message.message.type) &&
-                    message.message.type !== MsgEnum.VOICE &&
-                    !isMobile()
+                  active: activeBubble === message.message.id && !isSpecial && msgType !== MsgEnum.VOICE && !isMobile()
                 }
               ]"
-              :is="componentMap[message.message.type]"
+              :is="componentMap[msgType]"
               :body="message.message.body"
               :message-status="message.message.status"
               :upload-progress="uploadProgress"
@@ -200,10 +177,10 @@
 
             <!-- 显示翻译文本 -->
             <Transition name="fade-translate" appear mode="out-in">
-              <div v-if="message.message.body.translatedText" class="translated-text cursor-default flex flex-col">
+              <div v-if="translatedText" class="translated-text cursor-default flex flex-col">
                 <n-flex align="center" justify="space-between" class="mb-6px">
                   <n-flex align="center" :size="4">
-                    <span class="text-(12px #909090)">{{ message.message.body.translatedText.provider }}</span>
+                    <span class="text-(12px #909090)">{{ translatedText.provider }}</span>
                     <svg class="size-12px">
                       <use href="#success"></use>
                     </svg>
@@ -212,7 +189,7 @@
                       <template #trigger>
                         <svg
                           class="pl-6px size-10px cursor-pointer hover:color-#909090 hover:transition-colors"
-                          @click="handleCopyTranslation(message.message.body.translatedText.text)">
+                          @click="handleCopyTranslation(translatedText.text)">
                           <use href="#copy"></use>
                         </svg>
                       </template>
@@ -223,7 +200,7 @@
                     <use href="#close"></use>
                   </svg>
                 </n-flex>
-                <p class="select-text cursor-text">{{ message.message.body.translatedText.text }}</p>
+                <p class="select-text cursor-text">{{ translatedText.text }}</p>
               </div>
             </Transition>
 
@@ -241,14 +218,14 @@
                 </svg>
               </n-icon>
             </div>
-          </ContextMenu>
+          </LazyContextMenu>
 
           <!-- 回复的内容 -->
           <n-flex
             align="center"
             :size="6"
-            v-if="message.message.body.reply"
-            @click="emit('jump2Reply', message.message.body.reply.id)"
+            v-if="replyContent"
+            @click="emit('jump2Reply', replyContent.id)"
             :class="isMobile() ? 'bg-#fafafa text-13px' : 'bg-[--right-chat-reply-color] text-12px'"
             class="reply-bubble relative w-fit custom-shadow select-none chat-message-max-width"
             :style="{ 'max-width': bubbleMaxWidth }">
@@ -259,37 +236,34 @@
               class="reply-avatar"
               round
               :size="20"
-              :color="themes.content === ThemeEnum.DARK ? '' : '#fff'"
-              :fallback-src="themes.content === ThemeEnum.DARK ? '/logoL.png' : '/logoD.png'"
-              :src="getAvatarSrc(message.message.body.reply.uid)" />
-            <span>{{ `${message.message.body.reply.username}: ` }}</span>
+              :color="isDark ? '' : '#fff'"
+              :fallback-src="isDark ? '/logoL.png' : '/logoD.png'"
+              :src="getReplyAvatarSrc(replyContent.uid)" />
+            <span>{{ `${replyContent.username}: ` }}</span>
             <span class="content-span">
-              {{ message.message.body.reply.body }}
+              {{ replyContent.body }}
             </span>
-            <div v-if="message.message.body.reply.imgCount" class="reply-img-sub">
-              {{ message.message.body.reply.imgCount }}
+            <div v-if="replyContent.imgCount" class="reply-img-sub">
+              {{ replyContent.imgCount }}
             </div>
           </n-flex>
 
           <!-- 动态渲染所有回复表情反应 -->
           <div
-            v-if="message.message"
+            v-if="activeEmojiReactions.length > 0"
             class="flex-y-center gap-6px flex-wrap w-270px"
-            :class="{ 'justify-end': isSingleLineEmojis(message) }">
-            <template v-for="emoji in emojiList" :key="emoji.value">
-              <!-- 根据表情类型获取对应的计数属性名 -->
-              <div class="flex-y-center" v-if="message && getEmojiCount(message, emoji.value) > 0">
-                <div
-                  class="emoji-reply-bubble"
-                  :class="{ 'emoji-reply-bubble--active': hasUserMarkedEmoji(message, emoji.value) }"
-                  @click.stop="message && cancelReplyEmoji(message, emoji.value)">
-                  <img :title="emoji.title" class="size-18px" :src="emoji.url" :alt="emoji.title" />
-                  <span :class="hasUserMarkedEmoji(message, emoji.value) ? 'text-#fbb160' : 'text-(12px #eee)'">
-                    {{ message ? getEmojiCount(message, emoji.value) : 0 }}
-                  </span>
-                </div>
+            :class="{ 'justify-end': isSingleLineEmojis() }">
+            <div class="flex-y-center" v-for="emoji in activeEmojiReactions" :key="emoji.value">
+              <div
+                class="emoji-reply-bubble"
+                :class="{ 'emoji-reply-bubble--active': hasUserMarkedEmoji(message, emoji.value) }"
+                @click.stop="cancelReplyEmoji(message, emoji.value)">
+                <img :title="emoji.title" class="size-18px" :src="emoji.url" :alt="emoji.title" />
+                <span :class="hasUserMarkedEmoji(message, emoji.value) ? 'text-#fbb160' : 'text-(12px #eee)'">
+                  {{ getEmojiCount(message, emoji.value) }}
+                </span>
               </div>
-            </template>
+            </div>
           </div>
         </n-flex>
       </div>
@@ -332,6 +306,7 @@ import VideoCall from './VideoCall.vue'
 import Voice from './Voice.vue'
 import { toFriendInfoPage } from '@/utils/RouterUtils'
 import { vOnLongPress } from '@vueuse/components'
+import LazyContextMenu from '@/components/common/LazyContextMenu.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -359,8 +334,6 @@ const infoPopoverRefs = reactive<Record<string, any>>({})
 const { handlePopoverUpdate } = usePopover(selectKey, 'image-chat-main')
 
 const userStore = useUserStore()
-// 响应式状态变量
-const activeReply = ref<string>('')
 const hoverMsgId = ref<string>('')
 const settingStore = useSettingStore()
 const { themes } = storeToRefs(settingStore)
@@ -371,57 +344,76 @@ const groupStore = useGroupStore()
 const chatStore = useChatStore()
 const cachedStore = useCachedStore()
 const resolvingUserSet = new Set<string>()
-const isMultiSelectDisabled = computed(() => !isMessageMultiSelectEnabled(props.message.message.type))
-const bubbleMaxWidth = computed(() => {
-  if (isMobile()) {
-    return '84%'
-  }
-  return props.isGroup ? '32vw' : '50vw'
+const macGuard = createMacContextSelectionGuard({ lockSelector: '.chat-message-max-width' })
+
+const isMe = computed(() => props.fromUser?.uid === userStore.userInfo!.uid)
+const msgType = computed(() => props.message.message.type)
+const hasBubble = computed(
+  () => msgType.value !== MsgEnum.RECALL && msgType.value !== MsgEnum.SYSTEM && msgType.value !== MsgEnum.BOT
+)
+const isSpecial = computed(() => {
+  const t = msgType.value
+  return (
+    t === MsgEnum.IMAGE ||
+    t === MsgEnum.EMOJI ||
+    t === MsgEnum.NOTICE ||
+    t === MsgEnum.VIDEO ||
+    t === MsgEnum.FILE ||
+    t === MsgEnum.MERGE ||
+    t === MsgEnum.LOCATION
+  )
 })
+const isMultiSelectDisabled = computed(() => !isMessageMultiSelectEnabled(msgType.value))
+const bubbleMaxWidth = computed(() => (isMobile() ? '84%' : props.isGroup ? '32vw' : '50vw'))
+const isDark = computed(() => themes.value.content === ThemeEnum.DARK)
+const isLord = computed(() => groupStore.isCurrentLord(props.fromUser.uid))
+const isAdmin = computed(() => groupStore.isAdmin(props.fromUser.uid))
+const bubbleMenu = computed(() => handleItemType(msgType.value))
+const bubbleSpecialMenu = computed(() => specialMenuList.value(msgType.value))
+const replyContent = computed(() => props.message.message.body.reply)
+const translatedText = computed(() => props.message.message.body.translatedText)
 
-const { recordSelectionBeforeContext, handleContextMenuSelection } = createMacContextSelectionGuard({
-  lockSelector: '.chat-message-max-width'
-})
-
-const handleAvatarClick = (uid: string, msgId: string) => {
-  if (isMobile()) {
-    toFriendInfoPage(uid)
-  } else {
-    selectKey.value = msgId
-  }
-}
-
-const handleMentionUser = () => {
-  if (!props.isGroup || isMe.value) return
-  const targetUid = props.fromUser?.uid
-  if (!targetUid) return
-  useMitt.emit(MittEnum.AT, targetUid)
-}
-
-// 获取用户头像
-const getAvatarSrc = computed(() => (uid: string) => {
-  const isCurrentUser = uid === userStore.userInfo?.uid
-  const storeUser = groupStore.getUserInfo(uid)
-  if (isMe.value && isCurrentUser) {
-    return AvatarUtils.getAvatarUrl(userStore.userInfo!.avatar as string)
-  }
-  const resolvedAvatar = storeUser?.avatar || (uid === props.fromUser.uid ? props.message.fromUser.avatar : '')
-  return AvatarUtils.getAvatarUrl(resolvedAvatar as string)
-})
+// Single store lookup for sender info - avoids 4+ repeated getUserInfo calls
+const senderInfo = computed(() => groupStore.getUserInfo(props.fromUser.uid))
 
 const senderDisplayName = computed(() => {
   const displayName = groupStore.getUserDisplayName(props.fromUser.uid)
-  if (displayName) {
-    return displayName
-  }
-
-  const storeUser = groupStore.getUserInfo(props.fromUser.uid)
-  if (storeUser?.myName || storeUser?.name) {
-    return storeUser.myName || storeUser.name || ''
-  }
-
+  if (displayName) return displayName
+  const info = senderInfo.value
+  if (info?.myName || info?.name) return info.myName || info.name || ''
   return props.message.fromUser.username || '未知用户'
 })
+
+const senderLocPlace = computed(() => {
+  return senderInfo.value?.locPlace || props.message.fromUser.locPlace || ''
+})
+
+const senderBadge = computed(() => {
+  if (globalStore.currentSessionRoomId !== '1') return null
+  const itemId = senderInfo.value?.wearingItemId
+  if (!itemId) return null
+  return cachedStore.badgeById(itemId)
+})
+
+// Pre-compute main avatar URL instead of returning a new function each render
+const mainAvatarSrc = computed(() => {
+  if (isMe.value) {
+    return AvatarUtils.getAvatarUrl(userStore.userInfo!.avatar as string)
+  }
+  const resolvedAvatar = senderInfo.value?.avatar || props.message.fromUser.avatar
+  return AvatarUtils.getAvatarUrl(resolvedAvatar as string)
+})
+
+// Reply avatar uses a plain function (only called conditionally when reply exists)
+const getReplyAvatarSrc = (uid: string) => {
+  const isCurrentUser = uid === userStore.userInfo?.uid
+  if (isMe.value && isCurrentUser) {
+    return AvatarUtils.getAvatarUrl(userStore.userInfo!.avatar as string)
+  }
+  const storeUser = groupStore.getUserInfo(uid)
+  const resolvedAvatar = storeUser?.avatar || (uid === props.fromUser.uid ? props.message.fromUser.avatar : '')
+  return AvatarUtils.getAvatarUrl(resolvedAvatar as string)
+}
 
 const ensureSenderInfo = async (uid: string) => {
   if (!uid || resolvingUserSet.has(uid)) return
@@ -434,7 +426,6 @@ const ensureSenderInfo = async (uid: string) => {
     const users = await getUserByIds([uid])
     const user = Array.isArray(users) ? users[0] : null
     if (user?.uid) {
-      // 将缺失用户信息写入消息所属的房间，避免污染其他房间或丢弃结果
       groupStore.updateUserItem(user.uid, user, roomId)
     }
   } catch (error) {
@@ -450,12 +441,13 @@ watchEffect(() => {
   }
 })
 
-const senderLocPlace = computed(() => {
-  const storeLocPlace = groupStore.getUserInfo(props.fromUser.uid)?.locPlace
-  if (storeLocPlace) {
-    return storeLocPlace
-  }
-  return props.message.fromUser.locPlace || ''
+const activeEmojiReactions = computed(() => {
+  const marks = props.message?.message?.messageMarks
+  if (!marks) return []
+  return emojiList.value.filter((emoji) => {
+    const count = marks[String(emoji.value)]?.count
+    return count && count > 0
+  })
 })
 
 const componentMap: Partial<Record<MsgEnum, Component>> = {
@@ -475,98 +467,42 @@ const componentMap: Partial<Record<MsgEnum, Component>> = {
   [MsgEnum.LOCATION]: Location
 }
 
-const isSpecialMsgType = (type: number): boolean => {
-  return (
-    type === MsgEnum.IMAGE ||
-    type === MsgEnum.EMOJI ||
-    type === MsgEnum.NOTICE ||
-    type === MsgEnum.VIDEO ||
-    type === MsgEnum.FILE ||
-    type === MsgEnum.MERGE ||
-    type === MsgEnum.LOCATION
-  )
+const isSingleLineEmojis = (): boolean => {
+  return isMe.value && activeEmojiReactions.value.length <= 5
 }
 
-// 判断表情反应是否只有一行
-const isSingleLineEmojis = (item: MessageType): boolean => {
-  if (!item || !item.fromUser || !item.message) return false
-
-  // 计算有多少个表情反应
-  let emojiCount = 0
-  for (const emoji of emojiList.value) {
-    if (getEmojiCount(item, emoji.value) > 0) {
-      emojiCount++
-    }
-  }
-
-  // 如果表情数量小于等于3个，认为是一行
-  // 这个阈值可以根据实际UI调整
-  return isMe.value && emojiCount <= 5
-}
-
-// 取消表情反应
 const cancelReplyEmoji = async (item: MessageType, type: number): Promise<void> => {
   if (!item || !item.message || !item.message.messageMarks) return
-
-  // 检查该表情是否已被当前用户标记
   const userMarked = item.message.messageMarks[String(type)]?.userMarked
-
-  // 只有当用户已标记时才发送取消请求
   if (userMarked) {
     try {
-      const data = {
-        msgId: item.message.id,
-        markType: type, // 使用对应的MarkEnum类型
-        actType: 2 // 使用Confirm作为操作类型
-      }
-      await markMsg(data)
+      await markMsg({ msgId: item.message.id, markType: type, actType: 2 })
     } catch (error) {
       console.error('取消表情标记失败:', error)
     }
   }
 }
 
-/**
- * 根据表情类型获取对应的计数
- * @param item 消息项
- * @param emojiType 表情类型值
- * @returns 计数值
- */
 const getEmojiCount = (item: MessageType, emojiType: number): number => {
-  if (!item || !item.message || !item.message.messageMarks) return 0
-
-  // messageMarks 是一个对象，键是表情类型，值是包含 count 和 userMarked 的对象
-  // 如果存在该表情类型的统计数据，返回其计数值，否则返回0
+  if (!item?.message?.messageMarks) return 0
   return item.message.messageMarks[String(emojiType)]?.count || 0
 }
 
-// 是否是当前登录用户标记
 const hasUserMarkedEmoji = (item: MessageType, emojiType: number) => {
-  if (!item || !item.message || !item.message.messageMarks) return false
-
+  if (!item?.message?.messageMarks) return false
   return item.message.messageMarks[String(emojiType)]?.userMarked
 }
 
 const handleRetry = (item: MessageType): void => {
-  // TODO: 实现重试发送逻辑
   console.log('重试发送消息:', item)
 }
 
-// 处理复制翻译文本
 const handleCopyTranslation = (text: string) => {
   if (text) {
     navigator.clipboard.writeText(text)
     window.$message.success('复制成功')
   }
 }
-
-const hasBubble = (type: MsgEnum) => {
-  return !(type === MsgEnum.RECALL || type === MsgEnum.SYSTEM || type === MsgEnum.BOT)
-}
-
-const isMe = computed(() => {
-  return props.fromUser?.uid === userStore.userInfo!.uid
-})
 
 // 解决mac右键会选中文本的问题
 const closeMenu = (event: any) => {
@@ -575,27 +511,18 @@ const closeMenu = (event: any) => {
   }
 }
 
-// 处理表情回应
 const handleEmojiSelect = async (
   context: { label: string; value: number; title: string },
   item: MessageType
 ): Promise<void> => {
-  if (!item || !item.message) return
-
+  if (!item?.message) return
   if (!item.message.messageMarks) {
     item.message.messageMarks = {}
   }
-
-  // 检查该表情是否已被当前用户标记
   const userMarked = item.message.messageMarks[String(context.value)]?.userMarked
-  // 只给没有标记过的图标标记
   if (!userMarked) {
     try {
-      await markMsg({
-        msgId: item.message.id,
-        markType: context.value,
-        actType: 1
-      })
+      await markMsg({ msgId: item.message.id, markType: context.value, actType: 1 })
     } catch (error) {
       console.error('标记表情失败:', error)
     }
@@ -606,11 +533,7 @@ const handleEmojiSelect = async (
 
 useMitt.on(`${MittEnum.INFO_POPOVER}-Main`, (event: any) => {
   const messageId = event.uid
-
-  // 首先设置 selectKey 以显示 InfoPopover 组件
   selectKey.value = messageId
-
-  // 如果有对应的 popover 引用，则显示 popover
   if (infoPopoverRefs[messageId]) {
     infoPopoverRefs[messageId].setShow(true)
     handlePopoverUpdate(messageId)
@@ -625,17 +548,9 @@ onUnmounted(() => {
   window.removeEventListener('click', closeMenu, true)
 })
 
-/**
- * 长按事件（开始）
- */
-
 const longPressOption = computed(() => ({
   delay: 700,
-  modifiers: {
-    // 只在移动端阻止默认行为，桌面端允许文本选中
-    prevent: isMobile(),
-    stop: isMobile()
-  },
+  modifiers: { prevent: isMobile(), stop: isMobile() },
   reset: true,
   windowResize: true,
   windowScroll: true,
@@ -645,45 +560,31 @@ const longPressOption = computed(() => ({
 
 const handleLongPress = (e: PointerEvent, _menu: any) => {
   if (!isMobile()) return
-
-  // 1. 阻止默认行为（防止系统菜单出现）
   e.preventDefault()
   e.stopPropagation()
-
-  // // 2. 获取目标元素
   const target = e.target as HTMLElement
-
   const preventClick = (event: Event) => {
     event.stopPropagation()
     event.preventDefault()
     document.removeEventListener('click', preventClick, true)
     document.removeEventListener('pointerup', preventClick, true)
   }
-
-  // 3. 添加临时事件监听器，阻止后续点击事件
   document.addEventListener('click', preventClick, true)
   document.addEventListener('pointerup', preventClick, true)
-
-  // 4. 模拟右键点击事件
-  const contextMenuEvent = new MouseEvent('contextmenu', {
-    bubbles: true,
-    cancelable: true,
-    clientX: e.clientX,
-    clientY: e.clientY,
-    button: 2 // 明确指定右键
-  })
-
-  target.dispatchEvent(contextMenuEvent)
-
+  target.dispatchEvent(
+    new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: e.clientX,
+      clientY: e.clientY,
+      button: 2
+    })
+  )
   setTimeout(() => {
     document.removeEventListener('click', preventClick, true)
     document.removeEventListener('pointerup', preventClick, true)
   }, 300)
 }
-
-/**
- * 长按事件（结束）
- */
 </script>
 <style scoped lang="scss">
 @use '@/styles/scss/render-message';

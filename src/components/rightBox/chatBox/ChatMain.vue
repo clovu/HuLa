@@ -60,7 +60,7 @@
             v-for="(item, index) in chatStore.chatMessageList"
             :key="item.message.id"
             vertical
-            class="flex-y-center mb-12px"
+            class="flex-y-center mb-12px message-item"
             :data-message-id="item.message.id"
             :data-message-index="index">
             <!-- 信息间隔时间 -->
@@ -929,6 +929,8 @@ onUnmounted(() => {
 
 // 性能优化相关样式
 .message-item {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 80px;
   contain: layout style;
   will-change: auto;
 }
